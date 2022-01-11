@@ -209,24 +209,24 @@ spec:
         - mountPath: /var/lib/containers
           name: varlibcontainers
       workingDir: $(workspaces.source.path)
-    - image: $(params.BUILDER_IMAGE)
-      name: push
-      resources: {}
-      script: |
-        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
-          $(params.PUSH_EXTRA_ARGS) --tls-verify=$(params.TLSVERIFY) \
-          --digestfile $(workspaces.source.path)/image-digest $(params.IMAGE) \
-          docker://$(params.IMAGE)
-      volumeMounts:
-        - mountPath: /var/lib/containers
-          name: varlibcontainers
-      workingDir: $(workspaces.source.path)
-    - image: $(params.BUILDER_IMAGE)
-      name: digest-to-results
-      resources: {}
-      script: >-
-        cat $(workspaces.source.path)/image-digest | tee
-        /tekton/results/IMAGE_DIGEST
+#    - image: $(params.BUILDER_IMAGE)
+#      name: push
+#      resources: {}
+#      script: |
+#        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
+#          $(params.PUSH_EXTRA_ARGS) --tls-verify=$(params.TLSVERIFY) \
+#          --digestfile $(workspaces.source.path)/image-digest $(params.IMAGE) \
+#          docker://$(params.IMAGE)
+#      volumeMounts:
+#        - mountPath: /var/lib/containers
+#          name: varlibcontainers
+#      workingDir: $(workspaces.source.path)
+#    - image: $(params.BUILDER_IMAGE)
+#      name: digest-to-results
+#      resources: {}
+#      script: >-
+#        cat $(workspaces.source.path)/image-digest | tee
+#        /tekton/results/IMAGE_DIGEST
   volumes:
     - emptyDir: {}
       name: varlibcontainers
@@ -236,8 +236,7 @@ spec:
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
-  name: test
-  namespace: acancell
+  name: pipelinetest
 spec:
   tasks:
     - name: git-clone
@@ -251,22 +250,6 @@ spec:
         - name: source
           workspace: shared-workspace
     - name: buildah
-      params:
-        - name: BUILDER_IMAGE
-          value: >-
-            registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
-        - name: STORAGE_DRIVER
-          value: vfs
-        - name: DOCKERFILE
-          value: ./Containerfile
-        - name: CONTEXT
-          value: .
-        - name: TLSVERIFY
-          value: 'true'
-        - name: FORMAT
-          value: oci
-        - name: IMAGE
-          value: test
       runAfter:
         - git-clone
       taskRef:
@@ -278,3 +261,33 @@ spec:
 # NOTE Use a PVC for the workspace
   workspaces:
     - name: shared-workspace
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pipelinetest-
+spec:
+  pipelineRef:
+    name: pipelinetest
+  params:
+    - name: BUILDER_IMAGE
+      value: >-
+        registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
+    - name: STORAGE_DRIVER
+      value: vfs
+    - name: DOCKERFILE
+      value: ./Containerfile
+    - name: CONTEXT
+      value: .
+    - name: TLSVERIFY
+      value: 'true'
+    - name: FORMAT
+      value: oci
+    - name: IMAGE
+      value: test
+  serviceAccountName: pipeline
+  workspaces:
+    - name: git-source
+      persistentVolumeClaim:
+# NOTE Change accordingly to previously created PVC
+        claimName: picalc-source-pvc
