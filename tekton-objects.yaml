@@ -269,25 +269,45 @@ metadata:
 spec:
   pipelineRef:
     name: pipelinetest
-  params:
-    - name: BUILDER_IMAGE
-      value: >-
-        registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
-    - name: STORAGE_DRIVER
-      value: vfs
-    - name: DOCKERFILE
-      value: ./Containerfile
-    - name: CONTEXT
-      value: .
-    - name: TLSVERIFY
-      value: 'true'
-    - name: FORMAT
-      value: oci
-    - name: IMAGE
-      value: test
+    tasks:
+      - name: git-clone
+        params:
+          - name: url
+            value: 'https://github.com/acancell-redhat-training/tektontest'
+        taskRef:
+          kind: Task
+          name: git-clone
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+      - name: buildah
+        params:
+          - name: BUILDER_IMAGE
+            value: >-
+              registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
+          - name: STORAGE_DRIVER
+            value: vfs
+          - name: DOCKERFILE
+            value: ./Containerfile
+          - name: CONTEXT
+            value: .
+          - name: TLSVERIFY
+            value: 'true'
+          - name: FORMAT
+            value: oci
+          - name: IMAGE
+            value: test
+        runAfter:
+          - git-clone
+        taskRef:
+          kind: Task
+          name: buildah
+        workspaces:
+          - name: source
+            workspace: shared-workspace
   serviceAccountName: pipeline
   workspaces:
-    - name: git-source
+    - name: shared-workspace
       persistentVolumeClaim:
 # NOTE Change accordingly to previously created PVC
-        claimName: picalc-source-pvc
+        claimName: tekton-test
