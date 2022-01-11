@@ -1,0 +1,280 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  params:
+    - description: git url to clone
+      name: url
+      type: string
+    - default: ''
+      description: 'git revision to checkout (branch, tag, sha, ref…)'
+      name: revision
+      type: string
+    - default: ''
+      description: (optional) git refspec to fetch before checking out revision
+      name: refspec
+      type: string
+    - default: 'true'
+      description: defines if the resource should initialize and fetch the submodules
+      name: submodules
+      type: string
+    - default: '1'
+      description: >-
+        performs a shallow clone where only the most recent commit(s) will be
+        fetched
+      name: depth
+      type: string
+    - default: 'true'
+      description: >-
+        defines if http.sslVerify should be set to true or false in the global
+        git config
+      name: sslVerify
+      type: string
+    - default: ''
+      description: subdirectory inside the "output" workspace to clone the git repo into
+      name: subdirectory
+      type: string
+    - default: ''
+      description: >-
+        defines which directories patterns to match or exclude when performing a
+        sparse checkout
+      name: sparseCheckoutDirectories
+      type: string
+    - default: 'true'
+      description: >-
+        clean out the contents of the repo's destination directory (if it
+        already exists) before trying to clone the repo there
+      name: deleteExisting
+      type: string
+    - default: ''
+      description: git HTTP proxy server for non-SSL requests
+      name: httpProxy
+      type: string
+    - default: ''
+      description: git HTTPS proxy server for SSL requests
+      name: httpsProxy
+      type: string
+    - default: ''
+      description: git no proxy - opt out of proxying HTTP/HTTPS requests
+      name: noProxy
+      type: string
+    - default: 'true'
+      description: log the commands used during execution
+      name: verbose
+      type: string
+    - default: >-
+        registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8@sha256:afc5d3f9efe26c7042635d43b8ffd09d67936e3d0b6b901dc08a33e20313d361
+      description: the image used where the git-init binary is
+      name: gitInitImage
+      type: string
+  results:
+    - description: The precise commit SHA that was fetched by this Task
+      name: commit
+    - description: The precise URL that was fetched by this Task
+      name: url
+  steps:
+    - image: $(params.gitInitImage)
+      name: clone
+      resources: {}
+      script: >
+        #!/bin/sh
+
+        set -eu -o pipefail
+
+
+        if [[ "$(params.verbose)" == "true" ]] ; then
+          set -x
+        fi
+
+
+        CHECKOUT_DIR="$(workspaces.source.path)/$(params.subdirectory)"
+
+
+        cleandir() {
+          # Delete any existing contents of the repo directory if it exists.
+          #
+          # We don't just "rm -rf $CHECKOUT_DIR" because $CHECKOUT_DIR might be "/"
+          # or the root of a mounted volume.
+          if [[ -d "$CHECKOUT_DIR" ]] ; then
+            # Delete non-hidden files and directories
+            rm -rf "$CHECKOUT_DIR"/*
+            # Delete files and directories starting with . but excluding ..
+            rm -rf "$CHECKOUT_DIR"/.[!.]*
+            # Delete files and directories starting with .. plus any other character
+            rm -rf "$CHECKOUT_DIR"/..?*
+          fi
+        }
+
+
+        if [[ "$(params.deleteExisting)" == "true" ]] ; then
+          cleandir
+        fi
+
+
+        test -z "$(params.httpProxy)" || export HTTP_PROXY=$(params.httpProxy)
+
+        test -z "$(params.httpsProxy)" || export
+        HTTPS_PROXY=$(params.httpsProxy)
+
+        test -z "$(params.noProxy)" || export NO_PROXY=$(params.noProxy)
+
+
+        /ko-app/git-init \
+          -url "$(params.url)" \
+          -revision "$(params.revision)" \
+          -refspec "$(params.refspec)" \
+          -path "$CHECKOUT_DIR" \
+          -sslVerify="$(params.sslVerify)" \
+          -submodules="$(params.submodules)" \
+          -depth "$(params.depth)" \
+          -sparseCheckoutDirectories "$(params.sparseCheckoutDirectories)"
+        cd "$CHECKOUT_DIR"
+
+        RESULT_SHA="$(git rev-parse HEAD)"
+
+        EXIT_CODE="$?"
+
+        if [ "$EXIT_CODE" != 0 ] ; then
+          exit $EXIT_CODE
+        fi
+
+        # ensure we don't add a trailing newline to the result
+
+        echo -n "$RESULT_SHA" > $(results.commit.path)
+
+        echo -n "$(params.url)" > $(results.url.path)
+  workspaces:
+    - description: The git repo will be cloned onto the volume backing this workspace
+      name: source
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: buildah
+spec:
+  params:
+    - description: Reference of the image buildah will produce.
+      name: IMAGE
+      type: string
+    - default: >-
+        registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
+      description: The location of the buildah builder image.
+      name: BUILDER_IMAGE
+      type: string
+    - default: vfs
+      description: Set buildah storage driver
+      name: STORAGE_DRIVER
+      type: string
+    - default: ./Containerfile
+      description: Path to the Dockerfile to build.
+      name: DOCKERFILE
+      type: string
+    - default: .
+      description: Path to the directory to use as context.
+      name: CONTEXT
+      type: string
+    - default: 'true'
+      description: >-
+        Verify the TLS on the registry endpoint (for push/pull to a non-TLS
+        registry)
+      name: TLSVERIFY
+      type: string
+    - default: oci
+      description: 'The format of the built container, oci or docker'
+      name: FORMAT
+      type: string
+    - default: ''
+      description: Extra parameters passed for the build command when building images.
+      name: BUILD_EXTRA_ARGS
+      type: string
+    - default: ''
+      description: Extra parameters passed for the push command when pushing images.
+      name: PUSH_EXTRA_ARGS
+      type: string
+  results:
+    - description: Digest of the image just built.
+      name: IMAGE_DIGEST
+  steps:
+    - image: $(params.BUILDER_IMAGE)
+      name: build
+      resources: {}
+      script: |
+        buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
+          $(params.BUILD_EXTRA_ARGS) --format=$(params.FORMAT) \
+          --tls-verify=$(params.TLSVERIFY) --no-cache \
+          -f $(params.DOCKERFILE) -t $(params.IMAGE) $(params.CONTEXT)
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+    - image: $(params.BUILDER_IMAGE)
+      name: push
+      resources: {}
+      script: |
+        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
+          $(params.PUSH_EXTRA_ARGS) --tls-verify=$(params.TLSVERIFY) \
+          --digestfile $(workspaces.source.path)/image-digest $(params.IMAGE) \
+          docker://$(params.IMAGE)
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+    - image: $(params.BUILDER_IMAGE)
+      name: digest-to-results
+      resources: {}
+      script: >-
+        cat $(workspaces.source.path)/image-digest | tee
+        /tekton/results/IMAGE_DIGEST
+  volumes:
+    - emptyDir: {}
+      name: varlibcontainers
+  workspaces:
+    - name: source
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: test
+  namespace: acancell
+spec:
+  tasks:
+    - name: git-clone
+      params:
+        - name: url
+          value: 'https://github.com/acancell-redhat-training/tektontest'
+      taskRef:
+        kind: Task
+        name: git-clone
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    - name: buildah
+      params:
+        - name: BUILDER_IMAGE
+          value: >-
+            registry.redhat.io/rhel8/buildah@sha256:6a68ece207bc5fd8db2dd5cc2d0b53136236fb5178eb5b71eebe5d07a3c33d13
+        - name: STORAGE_DRIVER
+          value: vfs
+        - name: DOCKERFILE
+          value: ./Containerfile
+        - name: CONTEXT
+          value: .
+        - name: TLSVERIFY
+          value: 'true'
+        - name: FORMAT
+          value: oci
+        - name: IMAGE
+          value: test
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: Task
+        name: buildah
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+# NOTE Use a PVC for the workspace
+  workspaces:
+    - name: shared-workspace
