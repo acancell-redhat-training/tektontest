@@ -278,4 +278,13 @@ spec:
       persistentVolumeClaim:
         # PVC must be created in advance
         claimName: tekton-test 
+  podTemplate:
+    securityContext:
+      runAsNonroot: true
+      runAsUser: 1001
+  taskRunSpecs:
+    - pipelineTaskName: buildah
+      taskPodTemplate:
+        securityContext:
+          runAsNonroot: false
 
